@@ -1,3 +1,5 @@
 <resources>
-    <string name="app_name">MobileAssignmentRnD</string>
+    <string name="app_name">Cities Index</string>
+    <string name="cities_small_file_name">cities_small.json</string>
+    <string name="cities_original_file_name">cities_original.json</string>
 </resources>
