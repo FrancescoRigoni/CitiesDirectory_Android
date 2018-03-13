@@ -109,8 +109,10 @@ public class IndexBuilderFragment extends Fragment implements View.OnClickListen
                 mWakeLock = pm.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK, "My Tag");
                 mWakeLock.acquire(10*60*1000);
             } else {
-                mWakeLock.release();
-                mWakeLock = null;
+                if (mWakeLock != null && mWakeLock.isHeld()) {
+                    mWakeLock.release();
+                    mWakeLock = null;
+                }
             }
         });
         model.getIndexCreationError().observe(this, message -> {
