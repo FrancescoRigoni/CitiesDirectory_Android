@@ -47,8 +47,8 @@ public class IndexTreeStorageFs<T extends IndexTreeEntry> implements IndexTreeSt
     /**
      * Cache specific parameters.
      */
-    private static final int CACHED_ENTRIES_QUEUE_MAX_LIST_ITEM_SIZE = 1000;
-    private static final int CACHED_ENTRIES_QUEUE_MAX_ITEMS = 300;
+    private static final int CACHED_ENTRIES_QUEUE_MAX_LIST_ITEM_SIZE = 5000;
+    private static final int CACHED_ENTRIES_QUEUE_MAX_ITEMS = 30;
     private static final boolean DEBUG = false;
 
     /**

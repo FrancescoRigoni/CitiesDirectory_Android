@@ -60,6 +60,7 @@ public class CitiesIndexBuilderTask extends AsyncTask<Void, Pair<Integer, String
                 publishProgress(new Pair<>(count, city.getName()));
                 if (isCancelled()) {
                     mIndexTree.delete();
+                    reader.close();
                     return null;
                 }
             }
@@ -80,7 +81,6 @@ public class CitiesIndexBuilderTask extends AsyncTask<Void, Pair<Integer, String
     @Override
     protected void onCancelled() {
         if (mListener != null) {
-            mIndexTree.delete();
             mListener.onIndexBuildCancelled();
         }
     }
