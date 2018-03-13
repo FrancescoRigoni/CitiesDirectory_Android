@@ -1,7 +1,9 @@
 package com.rigoni.citiesindex.fragments;
 
+import android.arch.lifecycle.ViewModelProviders;
+import android.content.Context;
 import android.os.Bundle;
-import android.support.annotation.NonNull;
+import android.os.PowerManager;
 import android.support.annotation.Nullable;
 import android.support.v4.app.Fragment;
 import android.text.TextUtils;
@@ -13,81 +15,59 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.google.common.base.Preconditions;
-import com.rigoni.citiesindex.task.CitiesIndexBuilderTask;
 import com.rigoni.citiesindex.R;
-import com.rigoni.citiesindex.data.City;
-import com.rigoni.citiesindex.index.IndexTree;
-import com.rigoni.citiesindex.index.IndexTreeStorage;
-import com.rigoni.citiesindex.index.IndexTreeStorageFs;
-import com.rigoni.citiesindex.utils.IndexStorageUtils;
+import com.rigoni.citiesindex.model.IndexBuilderViewModel;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.Locale;
 
 /**
- * Fragment showing a progress indicator while the main index is created.
- *
- * TODO: This fragment uses an AsyncTask directly, a nice improvement would be to move
- * the AsyncTask inside a ViewModel and use a LiveData instead of a listener.
+ * Fragment showing a progress indicator and details while the main index is created.
  */
 public class IndexBuilderFragment extends Fragment implements View.OnClickListener {
+    public interface IndexBuilderFragmentListener {
+        void onIndexBuilt();
+        void onIndexBuildError(final String message);
+    }
 
     public static final String ARGUMENT_CITIES_FILE_NAME = "CITIES_FILE_NAME";
     public static final String ARGUMENT_CITIES_COUNT = "CITIES_COUNT";
-
-    private static final String KEY_LAST_PROGRESS_PERCENT = "lastProgressPercent";
-    private static final String KEY_LAST_CITY_NAME = "lastCityName";
-    private static final String KEY_ABORT_COUNT = "abortProgressCount";
 
     /**
      * Safety: press abort this amount of times to actually abort.
      */
     private static final int ABORT_PRESS_COUNT = 3;
 
-    public interface IndexBuilderFragmentListener {
-        void onIndexBuilt();
-        void onIndexBuildError(final String message);
-    }
-
-    @NonNull
-    private CitiesIndexBuilderTask.IndexBuilderTaskListener mIndexBuilderListener = new CitiesIndexBuilderTask.IndexBuilderTaskListener() {
-        @Override
-        public void onIndexCreated() {
-            mListener.onIndexBuilt();
-        }
-
-        @Override
-        public void onIndexProgress(int count, final String cityName) {
-            mLastProgressPercent = ((float) count / (float) mCitiesCount) * 100;
-            mTvDetailedProgress.setText(String.format(Locale.US, "%.2f%%", mLastProgressPercent));
-            mProgressBar.setProgress((int) mLastProgressPercent);
-            mTvCurrentCity.setText(cityName);
-        }
-
-        @Override
-        public void onIndexError(final String message) {
-            Toast.makeText(getActivity(), "Error building index: " + message, Toast.LENGTH_LONG).show();
-            mListener.onIndexBuildError(message);
-        }
-
-        @Override
-        public void onIndexBuildCancelled() {
-            mListener.onIndexBuildError("Cancelled");
-        }
-    };
-
     private TextView mTvCurrentCity;
     private TextView mTvDetailedProgress;
     private ProgressBar mProgressBar;
-    private String mLastCity;
+
     private int mAbortPressCount;
+
+    // Fragment arguments
     private int mCitiesCount;
-    private float mLastProgressPercent;
+    private String mCitiesFileName;
 
     private IndexBuilderFragmentListener mListener;
+
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        if (getArguments() != null) {
+            if (getArguments().containsKey(ARGUMENT_CITIES_FILE_NAME) &&
+                !TextUtils.isEmpty(getArguments().getString(ARGUMENT_CITIES_FILE_NAME))) {
+                mCitiesFileName = getArguments().getString(ARGUMENT_CITIES_FILE_NAME);
+            } else {
+                throw new IllegalArgumentException("Please provide the cities file name");
+            }
+            if (getArguments().containsKey(ARGUMENT_CITIES_COUNT)) {
+                mCitiesCount = getArguments().getInt(ARGUMENT_CITIES_COUNT);
+            } else {
+                throw new IllegalArgumentException("Please provide the cities count");
+            }
+        } else {
+            throw new IllegalArgumentException("Please provide the cities file name and count");
+        }
+    }
 
     @Override
     public void onActivityCreated(@Nullable Bundle savedInstanceState) {
@@ -108,79 +88,66 @@ public class IndexBuilderFragment extends Fragment implements View.OnClickListen
         mTvCurrentCity = view.findViewById(R.id.tvCurrentCity);
         mTvDetailedProgress = view.findViewById(R.id.tvDetailedProgress);
         mProgressBar = view.findViewById(R.id.progressBar);
-
-        if (savedInstanceState != null) {
-            mLastProgressPercent = savedInstanceState.getFloat(KEY_LAST_PROGRESS_PERCENT, 0);
-            mLastCity = savedInstanceState.getString(KEY_LAST_CITY_NAME, "");
-            mAbortPressCount = savedInstanceState.getInt(KEY_ABORT_COUNT, ABORT_PRESS_COUNT);
-
-            mProgressBar.setProgress((int) mLastProgressPercent);
-            mTvDetailedProgress.setText(String.format(Locale.US,"%.2f%%", mLastProgressPercent));
-            mTvCurrentCity.setText(mLastCity);
-        } else {
-            mAbortPressCount = ABORT_PRESS_COUNT;
-        }
+        mAbortPressCount = ABORT_PRESS_COUNT;
         return view;
     }
 
-    @Override
-    public void onResume() {
-        super.onResume();
+    private PowerManager.WakeLock mWakeLock;
 
-        String citiesFileName;
-        if (getArguments() != null) {
-            if (getArguments().containsKey(ARGUMENT_CITIES_FILE_NAME) &&
-                    !TextUtils.isEmpty(getArguments().getString(ARGUMENT_CITIES_FILE_NAME))) {
-                citiesFileName = getArguments().getString(ARGUMENT_CITIES_FILE_NAME);
-            } else {
-                throw new IllegalArgumentException("Please provide the cities file name");
+    @Override
+    public void onStart() {
+        super.onStart();
+        IndexBuilderViewModel model = ViewModelProviders.of(this).get(IndexBuilderViewModel.class);
+        model.getIndexReady().observe(this, ready -> {
+            if (ready) {
+                mListener.onIndexBuilt();
             }
-            if (getArguments().containsKey(ARGUMENT_CITIES_COUNT)) {
-                mCitiesCount = getArguments().getInt(ARGUMENT_CITIES_COUNT);
+        });
+        model.getIndexInProgress().observe(this, inProgress -> {
+            final PowerManager pm = (PowerManager) getActivity().getSystemService(Context.POWER_SERVICE);
+            if (inProgress && mWakeLock == null) {
+                mWakeLock = pm.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK, "My Tag");
+                mWakeLock.acquire(10*60*1000);
             } else {
-                throw new IllegalArgumentException("Please provide the cities count");
+                mWakeLock.release();
+                mWakeLock = null;
             }
-        } else {
-            throw new IllegalArgumentException("Please provide the cities file name and count");
+        });
+        model.getIndexCreationError().observe(this, message -> {
+            Toast.makeText(getActivity(), "Error building index: " + message, Toast.LENGTH_LONG).show();
+            mListener.onIndexBuildError(message);
+        });
+        model.getCurrentCityName().observe(this, name -> {
+            mTvCurrentCity.setText(name);
+        });
+        model.getCurrentCityNumber().observe(this, number -> {
+            if (number != null) {
+                showProgressForNumber(number);
+            }
+        });
+
+        if (model.getCurrentCityName().getValue() != null) {
+            mTvCurrentCity.setText(model.getCurrentCityName().getValue());
+        }
+        if (model.getCurrentCityNumber().getValue() != null) {
+            showProgressForNumber(model.getCurrentCityNumber().getValue());
         }
 
-        if (CitiesIndexBuilderTask.isTaskRunning()) {
-            // Task is still running
-            CitiesIndexBuilderTask.updateListener(mIndexBuilderListener);
-        } else if (CitiesIndexBuilderTask.isTaskCompleted()) {
-            // Task completed while we were paused
+        if (Boolean.TRUE.equals(model.getIndexReady().getValue())) {
             mListener.onIndexBuilt();
-        } else {
-            try {
-                final File indexTreeDir = IndexStorageUtils.findIndexStorageLocation(getActivity());
-                if (indexTreeDir != null) {
-                    final String indexPath = indexTreeDir.getAbsolutePath();
-                    final IndexTreeStorage storage = new IndexTreeStorageFs<City>(City.class, indexPath, true);
-                    final IndexTree indexTree = new IndexTree(storage);
-                    final InputStream inputStream = getActivity().getAssets().open(citiesFileName);
-                    CitiesIndexBuilderTask.startTask(inputStream, indexTree, mIndexBuilderListener);
-                } else {
-                    mListener.onIndexBuildError("Not enough space to build the IndexTree");
-                }
-            } catch (final IOException e) {
-                mListener.onIndexBuildError("IOException while opening cities file: " + e.getMessage());
-            }
+        } else if (Boolean.FALSE.equals(model.getIndexInProgress().getValue())) {
+            model.createIndex(mCitiesFileName);
         }
     }
 
     @Override
-    public void onSaveInstanceState(Bundle outState) {
-        outState.putFloat(KEY_LAST_PROGRESS_PERCENT, mLastProgressPercent);
-        outState.putString(KEY_LAST_CITY_NAME, mLastCity);
-        outState.putInt(KEY_ABORT_COUNT, mAbortPressCount);
-    }
-
-    @Override
-    public void onPause() {
-        super.onPause();
-        if (CitiesIndexBuilderTask.isTaskRunning()) {
-            CitiesIndexBuilderTask.updateListener(null);
-        }
+    public void onStop() {
+        super.onStop();
+        IndexBuilderViewModel model = ViewModelProviders.of(this).get(IndexBuilderViewModel.class);
+        model.getIndexReady().removeObservers(this);
+        model.getIndexCreationError().removeObservers(this);
+        model.getCurrentCityName().removeObservers(this);
+        model.getCurrentCityNumber().removeObservers(this);
     }
 
     @Override
@@ -189,10 +156,17 @@ public class IndexBuilderFragment extends Fragment implements View.OnClickListen
             mAbortPressCount--;
             if (mAbortPressCount > 0) {
                 Toast.makeText(getActivity(), "Press " + mAbortPressCount + " more times to abort.", Toast.LENGTH_LONG).show();
-            } else {
-                CitiesIndexBuilderTask.stopTask();
+            } else if (mAbortPressCount == 0) {
+                IndexBuilderViewModel model = ViewModelProviders.of(this).get(IndexBuilderViewModel.class);
+                model.cancelIndexCreation();
                 mListener.onIndexBuildError("Canceled");
             }
         }
+    }
+
+    private void showProgressForNumber(int number) {
+        float progress = ((float) number / (float) mCitiesCount) * 100;
+        mTvDetailedProgress.setText(String.format(Locale.US, "%.2f%%", progress));
+        mProgressBar.setProgress((int) progress);
     }
 }

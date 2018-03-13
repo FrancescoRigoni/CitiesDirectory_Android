@@ -5,6 +5,7 @@ import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.util.Pair;
 
+import com.google.common.base.Preconditions;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.stream.JsonReader;
@@ -26,51 +27,21 @@ public class CitiesIndexBuilderTask extends AsyncTask<Void, Pair<Integer, String
         void onIndexBuildCancelled();
     }
 
-    private static CitiesIndexBuilderTask sTask;
-
     private IndexTree mIndexTree;
     private IndexBuilderTaskListener mListener;
     private InputStream mInputStream;
-    private boolean mCompleted;
     private String mTaskErrorMessage;
 
-    /**
-     * Creates and starts a new {@link CitiesIndexBuilderTask}
-     * @param inputStream inputStream from which items are read
-     * @param indexTree the indexTree t o be used
-     * @param listener mandatory {@link IndexBuilderTaskListener} implementation.
-     */
-    public static void startTask(@NonNull final InputStream inputStream,
-                                 @NonNull final IndexTree indexTree,
-                                 @NonNull final IndexBuilderTaskListener listener) {
-        sTask = new CitiesIndexBuilderTask();
-        sTask.mInputStream = inputStream;
-        sTask.mIndexTree = indexTree;
-        sTask.mListener = listener;
-        sTask.execute();
-    }
+    public CitiesIndexBuilderTask(@NonNull final InputStream inputStream,
+                                  @NonNull final IndexTree indexTree,
+                                  @NonNull final IndexBuilderTaskListener listener) {
+        Preconditions.checkNotNull(inputStream);
+        Preconditions.checkNotNull(indexTree);
+        Preconditions.checkNotNull(listener);
 
-    /**
-     * Stops the currently running {@link CitiesIndexBuilderTask}
-     */
-    public static void stopTask() {
-        if (sTask != null && !sTask.isCancelled()) {
-            sTask.cancel(false);
-        }
-    }
-
-    public static void updateListener(@Nullable final IndexBuilderTaskListener listener) {
-        if (sTask != null) {
-            sTask.mListener = listener;
-        }
-    }
-
-    public static boolean isTaskRunning() {
-        return (sTask != null && !sTask.isCancelled() && !sTask.mCompleted);
-    }
-
-    public static boolean isTaskCompleted() {
-        return (sTask != null && !sTask.isCancelled() && sTask.mCompleted);
+        mInputStream = inputStream;
+        mIndexTree = indexTree;
+        mListener = listener;
     }
 
     @Override
@@ -82,7 +53,7 @@ public class CitiesIndexBuilderTask extends AsyncTask<Void, Pair<Integer, String
             final Gson gson = new GsonBuilder().create();
             reader.beginArray();
             int count = 0;
-            while (reader.hasNext()) {
+            while (reader.hasNext() && !isCancelled()) {
                 final City city = gson.fromJson(reader, City.class);
                 mIndexTree.addEntry(city);
                 count++;
@@ -109,6 +80,7 @@ public class CitiesIndexBuilderTask extends AsyncTask<Void, Pair<Integer, String
     @Override
     protected void onCancelled() {
         if (mListener != null) {
+            mIndexTree.delete();
             mListener.onIndexBuildCancelled();
         }
     }
@@ -129,6 +101,5 @@ public class CitiesIndexBuilderTask extends AsyncTask<Void, Pair<Integer, String
                 mListener.onIndexCreated();
             }
         }
-        mCompleted = true;
     }
 }
